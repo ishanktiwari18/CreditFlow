@@ -1,4 +1,4 @@
-# Credit Approval System
+# CreditFlow 
 
 A **Django + PostgreSQL + Redis + Celery** based backend system to simulate a real-world **credit approval and loan management workflow**.
 The entire application is **fully dockerized** and can be started with a single command.
