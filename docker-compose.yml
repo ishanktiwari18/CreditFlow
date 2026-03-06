@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    container_name: credit_db
+    environment:
+      - POSTGRES_DB=credit_approval
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: credit_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  web:
+    build: .
+    container_name: credit_web
+    command: sh -c "
+      echo 'Waiting for database...' &&
+      while ! nc -z db 5432; do sleep 1; done &&
+      echo 'Database is ready!' &&
+      echo 'Running migrations...' &&
+      python manage.py migrate &&
+      echo 'Migrations completed!' &&
+      echo 'Ingesting initial data...' &&
+      python manage.py ingest_data &&
+      echo 'Data ingestion completed!' &&
+      echo 'Starting Django server...' &&
+      python manage.py runserver 0.0.0.0:8000
+      "
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/credit_approval
+      - REDIS_URL=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=credit_approval_system.settings
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery:
+    build: .
+    container_name: credit_celery
+    command: sh -c "
+      echo 'Waiting for database and redis...' &&
+      while ! nc -z db 5432; do sleep 1; done &&
+      while ! nc -z redis 6379; do sleep 1; done &&
+      echo 'Starting Celery worker...' &&
+      celery -A credit_approval_system worker -l info
+      "
+    volumes:
+      - .:/app
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/credit_approval
+      - REDIS_URL=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=credit_approval_system.settings
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      web:
+        condition: service_started
+
+volumes:
+  postgres_data:
